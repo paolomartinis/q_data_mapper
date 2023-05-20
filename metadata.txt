@@ -12,8 +12,8 @@ email=martinis@idrostudi.it
 
 about=Map and refactor data from one layer to another
 
-tracker=https://github.com/paolomartinis/qdatamapper/issues
-repository=https://github.com/paolomartinis/qdatamapper/
+tracker=https://github.com/paolomartinis/q_data_mapper/issues
+repository=https://github.com/paolomartinis/q_data_mapper/
 # End of mandatory metadata
 
 # Recommended items:
@@ -25,7 +25,7 @@ hasProcessingProvider=no
 # Tags are comma separated with spaces allowed
 tags=python
 
-homepage=https://github.com/paolomartinis/qdatamapper/
+homepage=https://github.com/paolomartinis/q_data_mapper/
 category=Plugins
 icon=icon.png
 # experimental flag
