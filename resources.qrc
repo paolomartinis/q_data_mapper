@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/plugins/q_data_mapper" >
+        <file>icon.png</file>
+    </qresource>
+</RCC>
