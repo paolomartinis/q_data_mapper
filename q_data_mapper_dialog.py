@@ -22,23 +22,356 @@
  ***************************************************************************/
 """
 
-import os
 
-from qgis.PyQt import uic
-from qgis.PyQt import QtWidgets
+from qgis.PyQt import QtWidgets, QtGui, QtCore
+from qgis.core import QgsProject
+from qgis.gui import QgsExpressionBuilderWidget
+from qgis.core import QgsExpression, QgsExpressionContext, QgsExpressionContextUtils
 
-# This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
-FORM_CLASS, _ = uic.loadUiType(os.path.join(
-    os.path.dirname(__file__), 'q_data_mapper_dialog_base.ui'))
-
-
-class QDataMapperDialog(QtWidgets.QDialog, FORM_CLASS):
-    def __init__(self, parent=None):
-        """Constructor."""
+class QDataMapperDialog(QtWidgets.QDialog):
+    def __init__(self, iface, parent=None):
         super(QDataMapperDialog, self).__init__(parent)
-        # Set up the user interface from Designer through FORM_CLASS.
-        # After self.setupUi() you can access any designer object by doing
-        # self.<objectname>, and you can use autoconnect slots - see
-        # http://qt-project.org/doc/qt-4.8/designer-using-a-ui-file.html
-        # #widgets-and-dialogs-with-auto-connect
-        self.setupUi(self)
+
+        self.iface = iface
+        self.selected_layers = []
+
+        # Create layout
+        layout = QtWidgets.QVBoxLayout(self)
+
+        # Create source layer combo box
+        self.cbSourceLayer = QtWidgets.QComboBox(self)
+        layout.addWidget(self.cbSourceLayer)
+
+        # Create destination layer combo box
+        self.cbDestinationLayer = QtWidgets.QComboBox(self)
+        layout.addWidget(self.cbDestinationLayer)
+
+        # Create the buttons layout
+        btn_layout = QtWidgets.QHBoxLayout()
+        layout.addLayout(btn_layout)
+
+        # Create the swap button
+        self.btnSwap = QtWidgets.QPushButton('Swap', self)
+        self.btnSwap.clicked.connect(self.swap_layers)
+        btn_layout.addWidget(self.btnSwap)
+
+        # Create the mapping button
+        self.btnMapData = QtWidgets.QPushButton('Start Mapping', self)
+        self.btnMapData.clicked.connect(self.start_mapping)
+        btn_layout.addWidget(self.btnMapData)
+
+        # Populate combo boxes and set the current selection
+        self.populate_combo_boxes()
+
+    def get_selected_layers(self):
+        layers = self.iface.layerTreeView().selectedLayers()
+        return [layer.name() for layer in layers]
+
+    def populate_combo_boxes(self):
+        self.selected_layers = self.get_selected_layers()
+
+        self.cbSourceLayer.clear()
+        self.cbDestinationLayer.clear()
+
+        self.cbSourceLayer.addItems(self.selected_layers)
+        self.cbDestinationLayer.addItems(self.selected_layers)
+
+        self.cbSourceLayer.setCurrentIndex(0)
+        self.cbDestinationLayer.setCurrentIndex(1)
+
+    def swap_layers(self):
+        current_source = self.cbSourceLayer.currentText()
+        current_destination = self.cbDestinationLayer.currentText()
+        self.cbSourceLayer.setCurrentText(current_destination)
+        self.cbDestinationLayer.setCurrentText(current_source)
+
+    def start_mapping(self):
+        source_layer_name = self.cbSourceLayer.currentText()
+        destination_layer_name = self.cbDestinationLayer.currentText()
+        
+        self.layer_attrs_dialog = LayerAttributesDialog(source_layer_name, destination_layer_name)
+        self.layer_attrs_dialog.show()
+
+        # Close the QDataMapperDialog after showing the LayerAttributesDialog
+        self.close()
+
+
+class MappingTableWidget(QtWidgets.QTableWidget):
+    def __init__(self, source_table, destination_table, parent=None):
+        super(MappingTableWidget, self).__init__(parent)
+        self.source_table = source_table
+        self.destination_table = destination_table
+
+    def count_destination_field(self, field_name):
+        count = 0
+        for i in range(self.rowCount()):
+            if self.item(i, 1) and self.item(i, 1).text() == field_name:
+                count += 1
+        return count
+
+    def dropEvent(self, event):
+        if event.mimeData().hasFormat('application/x-qabstractitemmodeldatalist'):
+            dropping_table = self
+            source_table = event.source()
+            dropped_row = source_table.currentRow()
+            field_item = source_table.item(dropped_row, 0)
+            field_name = field_item.text()
+
+            # Check if this field is already mapped when dropping from source_table
+            if source_table == self.source_table:
+                for i in range(dropping_table.rowCount()):
+                    if dropping_table.item(i, 0) is not None and dropping_table.item(i, 1) is not None:
+                        if dropping_table.item(i, 0).text() == field_name and dropping_table.item(i, 1).text() != "":
+                            return
+
+            dropped_point = event.pos()
+            dropped_index = dropping_table.indexAt(dropped_point)
+            dropped_on_row = dropped_index.row()
+
+            if dropped_on_row == -1:
+                dropped_on_row = dropping_table.rowCount()
+                dropping_table.insertRow(dropped_on_row)
+                dropping_table.setItem(dropped_on_row, 0 if source_table == self.source_table else 1, QtWidgets.QTableWidgetItem(""))
+
+            field_item = QtWidgets.QTableWidgetItem(field_name)
+
+            if source_table == self.source_table:
+                dropping_table.setItem(dropped_on_row, 0, field_item)
+            elif source_table == self.destination_table:
+                dropping_table.setItem(dropped_on_row, 2, field_item)
+
+        self.parent().refresh_table_colors()
+        event.accept()
+
+    def setRowColor(self, row, color):
+        for col in range(self.columnCount()):
+            item = self.item(row, col)
+            if item is not None:
+                item.setBackground(color)
+
+
+class LayerAttributesDialog(QtWidgets.QDialog):
+    def __init__(self, source_layer_name, destination_layer_name, parent=None):
+        super(LayerAttributesDialog, self).__init__(parent)
+
+        self.source_layer_name = source_layer_name
+        self.destination_layer_name = destination_layer_name
+
+        source_label = QtWidgets.QLabel("Source Table", self)
+        mapping_label = QtWidgets.QLabel("Mapping Table", self)
+        destination_label = QtWidgets.QLabel("Destination Table", self)
+
+        self.source_table = QtWidgets.QTableWidget(self)
+        self.destination_table = QtWidgets.QTableWidget(self)
+        self.mapping_table = MappingTableWidget(self.source_table, self.destination_table, self)
+
+        self.populate_tables(source_layer_name, destination_layer_name)
+
+        self.source_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.source_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.source_table.setDragEnabled(True)
+
+        self.destination_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.destination_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.destination_table.setDragEnabled(True)
+
+        self.mapping_table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+        self.mapping_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.mapping_table.setDragEnabled(False)
+        self.mapping_table.setAcceptDrops(True)
+        self.mapping_table.viewport().setAcceptDrops(True)
+        self.mapping_table.setDragDropMode(QtWidgets.QAbstractItemView.DropOnly)
+        self.mapping_table.setDropIndicatorShown(True)
+        self.mapping_table.setDragDropOverwriteMode(False)
+        self.mapping_table.cellDoubleClicked.connect(self.open_expression_dialog)
+
+        # Create the main layout
+        layout = QtWidgets.QHBoxLayout(self)
+
+        # Create vertical layouts for each table
+        source_layout = QtWidgets.QVBoxLayout()
+        source_layout.addWidget(source_label)
+        source_layout.addWidget(self.source_table)
+
+        mapping_layout = QtWidgets.QVBoxLayout()
+        mapping_layout.addWidget(mapping_label)
+        mapping_layout.addWidget(self.mapping_table)
+
+        destination_layout = QtWidgets.QVBoxLayout()
+        destination_layout.addWidget(destination_label)
+        destination_layout.addWidget(self.destination_table)
+
+        # Add the vertical layouts to the main layout
+        layout.addLayout(source_layout)
+        layout.addLayout(mapping_layout)
+        layout.addLayout(destination_layout)
+
+        # Create the remove button
+        self.btnRemoveMappingRow = QtWidgets.QPushButton('Remove Mapping', self)
+        self.btnRemoveMappingRow.clicked.connect(self.remove_mapping_row)
+        mapping_layout.addWidget(self.btnRemoveMappingRow)
+
+        self.setLayout(layout)
+        self.setWindowTitle('Layer Attributes')
+        self.resize(1200, 800)
+
+    def populate_tables(self, source_layer_name, destination_layer_name):
+        source_layer = next((layer for layer in QgsProject.instance().mapLayers().values()
+                             if layer.name() == source_layer_name), None)
+        destination_layer = next((layer for layer in QgsProject.instance().mapLayers().values()
+                                  if layer.name() == destination_layer_name), None)
+
+        if source_layer is None or destination_layer is None:
+            return
+
+        source_fields = source_layer.fields()
+        destination_fields = destination_layer.fields()
+
+        self.source_table.setColumnCount(2)
+        self.source_table.setHorizontalHeaderLabels(['Field Name', 'Data Type'])
+        self.source_table.setRowCount(len(source_fields))
+
+        for idx, field in enumerate(source_fields):
+            field_name_item = QtWidgets.QTableWidgetItem(field.name())
+            data_type_item = QtWidgets.QTableWidgetItem(field.typeName())
+
+            self.source_table.setItem(idx, 0, field_name_item)
+            self.source_table.setItem(idx, 1, data_type_item)
+
+        self.destination_table.setColumnCount(2)
+        self.destination_table.setHorizontalHeaderLabels(['Field Name', 'Data Type'])
+        self.destination_table.setRowCount(len(destination_fields))
+
+        for idx, field in enumerate(destination_fields):
+            field_name_item = QtWidgets.QTableWidgetItem(field.name())
+            data_type_item = QtWidgets.QTableWidgetItem(field.typeName())
+
+            self.destination_table.setItem(idx, 0, field_name_item)
+            self.destination_table.setItem(idx, 1, data_type_item)
+
+        self.mapping_table.setColumnCount(3)
+        self.mapping_table.setHorizontalHeaderLabels(['Source Field', 'Transformation', 'Destination Field'])
+        self.mapping_table.setRowCount(0)
+        self.populate_mapping_table()
+        self.refresh_table_colors()
+
+    def populate_mapping_table(self):
+        for i in range(self.source_table.rowCount()):
+            source_field = self.source_table.item(i, 0).text()
+            for j in range(self.destination_table.rowCount()):
+                destination_field = self.destination_table.item(j, 0).text()
+                if source_field == destination_field:
+                    self.mapping_table.insertRow(self.mapping_table.rowCount())
+                    self.mapping_table.setItem(self.mapping_table.rowCount() - 1, 0, QtWidgets.QTableWidgetItem(source_field))
+                    self.mapping_table.setItem(self.mapping_table.rowCount() - 1, 1, QtWidgets.QTableWidgetItem(""))  # empty transformation
+                    self.mapping_table.setItem(self.mapping_table.rowCount() - 1, 2, QtWidgets.QTableWidgetItem(destination_field))
+
+    def refresh_table_colors(self):
+        for i in range(self.mapping_table.rowCount()):
+            source_field_item = self.mapping_table.item(i, 0)
+            destination_field_item = self.mapping_table.item(i, 2)
+
+            # Check if item exists in mapping_table
+            if source_field_item is not None:
+                source_field_count = sum(1 for k in range(self.mapping_table.rowCount())
+                                         if self.mapping_table.item(k, 0) is not None and 
+                                         self.mapping_table.item(k, 0).text() == source_field_item.text())
+                for j in range(self.source_table.rowCount()):
+                    if self.source_table.item(j, 0).text() == source_field_item.text():
+                        for col in range(self.source_table.columnCount()):
+                            self.source_table.item(j, col).setBackground(QtGui.QColor(0, 255, 0, 50))  # Green
+                        if source_field_count > 1:
+                            bold_font = QtGui.QFont()
+                            bold_font.setBold(True)
+                            self.source_table.item(j, 0).setFont(bold_font)
+
+            if destination_field_item is not None:
+                for j in range(self.destination_table.rowCount()):
+                    if self.destination_table.item(j, 0).text() == destination_field_item.text():
+                        for col in range(self.destination_table.columnCount()):
+                            self.destination_table.item(j, col).setBackground(QtGui.QColor(0, 255, 0, 50))  # Green
+
+            if source_field_item is not None and destination_field_item is not None:
+                source_data_type = self.get_field_data_type(source_field_item.text(), self.source_table)
+                destination_data_type = self.get_field_data_type(destination_field_item.text(), self.destination_table)
+                if source_data_type == destination_data_type:
+                    self.mapping_table.setRowColor(i, QtGui.QColor(0, 255, 0, 50))  # Green
+                else:
+                    self.mapping_table.setRowColor(i, QtGui.QColor(255, 0, 0, 50))  # Red
+
+    
+    def get_field_data_type(self, field_name, table):
+        for row in range(table.rowCount()):
+            if table.item(row, 0).text() == field_name:
+                return table.item(row, 1).text()
+        return None
+
+    def remove_mapping_row(self):
+        currentRow = self.mapping_table.currentRow()
+        if currentRow != -1:
+            self.mapping_table.removeRow(currentRow)
+            self.refresh_table_colors()
+
+    def open_expression_dialog(self, row, column):
+        if column == 1:  # Only handle clicks on the Transformation column
+            item = self.mapping_table.item(row, column)
+            source_layer = next((layer for layer in QgsProject.instance().mapLayers().values()
+                                if layer.name() == self.source_layer_name), None)
+            dialog = ExpressionDialog(source_layer, self)
+            if dialog.exec_() == QtWidgets.QDialog.Accepted:
+                item.setText(dialog.getExpression())
+
+
+class ExpressionDialog(QtWidgets.QDialog):
+    def __init__(self, layer, parent=None):
+        super(ExpressionDialog, self).__init__(parent)
+
+        self.layer = layer
+
+        # Create layout
+        layout = QtWidgets.QVBoxLayout(self)
+
+        # Create the expression input field with QgsExpressionBuilderWidget
+        self.expressionBuilder = QgsExpressionBuilderWidget(self)
+        self.expressionBuilder.setLayer(self.layer)
+        layout.addWidget(self.expressionBuilder)
+
+        # Create the validate button
+        self.btnValidate = QtWidgets.QPushButton('Validate', self)
+        self.btnValidate.clicked.connect(self.validate_expression)
+        layout.addWidget(self.btnValidate)
+
+        # Create the OK button
+        self.btnOK = QtWidgets.QPushButton('OK', self)
+        self.btnOK.clicked.connect(self.accept)
+        self.btnOK.setEnabled(False)  # Initially disabled
+        layout.addWidget(self.btnOK)
+
+        # Create the validation result label
+        self.lblValidationResult = QtWidgets.QLabel(self)
+        layout.addWidget(self.lblValidationResult)
+
+        self.setLayout(layout)
+        self.setWindowTitle('Enter Expression')
+
+    def validate_expression(self):
+        expression = self.expressionBuilder.expressionText()
+
+        exp = QgsExpression(expression)
+
+        context = QgsExpressionContext()
+        context.appendScopes(QgsExpressionContextUtils.globalProjectLayerScopes(self.layer))
+
+        if exp.hasParserError():
+            self.lblValidationResult.setText('Invalid expression: ' + exp.parserErrorString())
+            self.btnOK.setEnabled(False)
+        elif not exp.prepare(context):
+            self.lblValidationResult.setText('Invalid expression: ' + exp.evalErrorString())
+            self.btnOK.setEnabled(False)
+        else:
+            self.lblValidationResult.setText('Valid expression')
+            self.btnOK.setEnabled(True)  # Enable OK button if expression is valid
+
+    def getExpression(self):
+        # Return the current expression
+        return self.expressionBuilder.expressionText()
