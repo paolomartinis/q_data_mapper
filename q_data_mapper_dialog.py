@@ -28,6 +28,7 @@ from qgis.core import QgsProject
 from qgis.gui import QgsExpressionBuilderWidget
 from qgis.core import QgsExpression, QgsExpressionContext, QgsExpressionContextUtils
 
+
 class QDataMapperDialog(QtWidgets.QDialog):
     def __init__(self, iface, parent=None):
         super(QDataMapperDialog, self).__init__(parent)
@@ -149,30 +150,41 @@ class MappingTableWidget(QtWidgets.QTableWidget):
 
 
 class LayerAttributesDialog(QtWidgets.QDialog):
+    """
+    This class represents the main dialog of the plugin
+    """
+
     def __init__(self, source_layer_name, destination_layer_name, parent=None):
         super(LayerAttributesDialog, self).__init__(parent)
 
+        # Storing layer names
         self.source_layer_name = source_layer_name
         self.destination_layer_name = destination_layer_name
 
+        # Creating labels for the three tables
         source_label = QtWidgets.QLabel("Source Table", self)
         mapping_label = QtWidgets.QLabel("Mapping Table", self)
         destination_label = QtWidgets.QLabel("Destination Table", self)
 
+        # Initializing tables
         self.source_table = QtWidgets.QTableWidget(self)
         self.destination_table = QtWidgets.QTableWidget(self)
+        # MappingTableWidget seems to be a custom widget not defined in the provided code
         self.mapping_table = MappingTableWidget(self.source_table, self.destination_table, self)
 
+        # Populating the tables with fields from the respective layers
         self.populate_tables(source_layer_name, destination_layer_name)
 
+        # Setting up table properties for drag and drop operations
+        # Source table
         self.source_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.source_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.source_table.setDragEnabled(True)
-
+        # Destination table
         self.destination_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.destination_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.destination_table.setDragEnabled(True)
-
+        # Mapping table
         self.mapping_table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
         self.mapping_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.mapping_table.setDragEnabled(False)
@@ -183,32 +195,28 @@ class LayerAttributesDialog(QtWidgets.QDialog):
         self.mapping_table.setDragDropOverwriteMode(False)
         self.mapping_table.cellDoubleClicked.connect(self.open_expression_dialog)
 
-        # Create the main layout
+        # Setting up layout for the dialog
+        # The three tables and their labels are placed side by side horizontally
         layout = QtWidgets.QHBoxLayout(self)
-
-        # Create vertical layouts for each table
         source_layout = QtWidgets.QVBoxLayout()
         source_layout.addWidget(source_label)
         source_layout.addWidget(self.source_table)
-
         mapping_layout = QtWidgets.QVBoxLayout()
         mapping_layout.addWidget(mapping_label)
         mapping_layout.addWidget(self.mapping_table)
-
         destination_layout = QtWidgets.QVBoxLayout()
         destination_layout.addWidget(destination_label)
         destination_layout.addWidget(self.destination_table)
-
-        # Add the vertical layouts to the main layout
         layout.addLayout(source_layout)
         layout.addLayout(mapping_layout)
         layout.addLayout(destination_layout)
 
-        # Create the remove button
+        # Adding a button to remove mappings
         self.btnRemoveMappingRow = QtWidgets.QPushButton('Remove Mapping', self)
         self.btnRemoveMappingRow.clicked.connect(self.remove_mapping_row)
         mapping_layout.addWidget(self.btnRemoveMappingRow)
 
+        # Final setup for the dialog
         self.setLayout(layout)
         self.setWindowTitle('Layer Attributes')
         self.resize(1200, 800)
@@ -327,6 +335,10 @@ class LayerAttributesDialog(QtWidgets.QDialog):
 
 
 class ExpressionDialog(QtWidgets.QDialog):
+    """
+    This class represents the expression dialog that is opened when a row in the mapping table is double-clicked
+    """
+
     def __init__(self, field_name, layer, current_expression, parent=None):
         super(ExpressionDialog, self).__init__(parent)
 
@@ -377,6 +389,7 @@ class ExpressionDialog(QtWidgets.QDialog):
         self.lblValidationResult = QtWidgets.QLabel(self)
         layout.addWidget(self.lblValidationResult)
 
+        # Final setup for the dialog
         self.setLayout(layout)
         self.setWindowTitle('Enter Expression')
 
