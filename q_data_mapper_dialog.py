@@ -32,6 +32,9 @@ from statistics import mean, mode
 
 
 class QDataMapperDialog(QtWidgets.QDialog):
+    """
+    Main dialog to select the source and destination layers
+    """
     def __init__(self, iface, parent=None):
         super(QDataMapperDialog, self).__init__(parent)
 
@@ -87,6 +90,11 @@ class QDataMapperDialog(QtWidgets.QDialog):
         current_destination = self.cbDestinationLayer.currentText()
         self.cbSourceLayer.setCurrentText(current_destination)
         self.cbDestinationLayer.setCurrentText(current_source)
+
+    def showEvent(self, event):
+        """Override showEvent to refresh combo boxes every time dialog is opened."""
+        self.populate_combo_boxes()
+        super().showEvent(event)
 
     def start_mapping(self):
         source_layer_name = self.cbSourceLayer.currentText()
