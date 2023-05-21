@@ -105,7 +105,7 @@ class MappingTableWidget(QtWidgets.QTableWidget):
     def count_destination_field(self, field_name):
         count = 0
         for i in range(self.rowCount()):
-            if self.item(i, 1) and self.item(i, 1).text() == field_name:
+            if self.item(i, 2) and self.item(i, 2).text() == field_name:
                 count += 1
         return count
 
@@ -117,12 +117,10 @@ class MappingTableWidget(QtWidgets.QTableWidget):
             field_item = source_table.item(dropped_row, 0)
             field_name = field_item.text()
 
-            # Check if this field is already mapped when dropping from source_table
-            if source_table == self.source_table:
-                for i in range(dropping_table.rowCount()):
-                    if dropping_table.item(i, 0) is not None and dropping_table.item(i, 1) is not None:
-                        if dropping_table.item(i, 0).text() == field_name and dropping_table.item(i, 1).text() != "":
-                            return
+            # Check if this field is already mapped when dropping from destination_table
+            if source_table == self.destination_table:
+                if self.count_destination_field(field_name) > 0:
+                    return
 
             dropped_point = event.pos()
             dropped_index = dropping_table.indexAt(dropped_point)
@@ -315,17 +313,24 @@ class LayerAttributesDialog(QtWidgets.QDialog):
     def open_expression_dialog(self, row, column):
         if column == 1:  # Only handle clicks on the Transformation column
             item = self.mapping_table.item(row, column)
+            source_field_name = self.mapping_table.item(row, column-1)
             source_layer = next((layer for layer in QgsProject.instance().mapLayers().values()
                                 if layer.name() == self.source_layer_name), None)
-            dialog = ExpressionDialog(source_layer, self)
-            if dialog.exec_() == QtWidgets.QDialog.Accepted:
-                item.setText(dialog.getExpression())
+        # Get the current expression
+        current_expression = None
+        if item:
+            current_expression = item.text()
+
+        dialog = ExpressionDialog(source_field_name, source_layer, current_expression, self)
+        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+            item.setText(dialog.getExpression())
 
 
 class ExpressionDialog(QtWidgets.QDialog):
-    def __init__(self, layer, parent=None):
+    def __init__(self, field_name, layer, current_expression, parent=None):
         super(ExpressionDialog, self).__init__(parent)
 
+        self.field_name_item = field_name
         self.layer = layer
 
         # Create layout
@@ -334,7 +339,28 @@ class ExpressionDialog(QtWidgets.QDialog):
         # Create the expression input field with QgsExpressionBuilderWidget
         self.expressionBuilder = QgsExpressionBuilderWidget(self)
         self.expressionBuilder.setLayer(self.layer)
+
+        # Set the current expression
+        if current_expression:
+            self.expressionBuilder.setExpressionText(current_expression)
+
         layout.addWidget(self.expressionBuilder)
+
+        # Create horizontal layout for the buttons
+        button_layout = QtWidgets.QHBoxLayout()
+
+        # Create the source field name button
+        self.btnFieldName = QtWidgets.QPushButton('Insert Field Name', self)
+        self.btnFieldName.clicked.connect(self.insert_field_name)
+        button_layout.addWidget(self.btnFieldName)
+
+        # Create the layer name button
+        self.btnLayerName = QtWidgets.QPushButton('Insert Layer Name', self)
+        self.btnLayerName.clicked.connect(self.insert_layer_name)
+        button_layout.addWidget(self.btnLayerName)
+
+        # Add the horizontal layout to the main vertical layout
+        layout.addLayout(button_layout)
 
         # Create the validate button
         self.btnValidate = QtWidgets.QPushButton('Validate', self)
@@ -353,6 +379,30 @@ class ExpressionDialog(QtWidgets.QDialog):
 
         self.setLayout(layout)
         self.setWindowTitle('Enter Expression')
+
+    def insert_field_name(self):
+        # Get current text from the expression builder
+        current_text = self.expressionBuilder.expressionText()
+
+        field_name_item = self.field_name_item
+        if field_name_item is not None:  # Check if item is not None to prevent AttributeError
+            field_name = field_name_item.text()
+
+            # Append the field name to the current text
+            new_text = current_text + field_name
+
+            # Set the new text in the expression builder
+            self.expressionBuilder.setExpressionText(new_text)
+
+    def insert_layer_name(self):
+        # Get current text from the expression builder
+        current_text = self.expressionBuilder.expressionText()
+
+        # Append the layer name to the current text
+        new_text = current_text + self.layer.name()
+
+        # Set the new text in the expression builder
+        self.expressionBuilder.setExpressionText(new_text)
 
     def validate_expression(self):
         expression = self.expressionBuilder.expressionText()
