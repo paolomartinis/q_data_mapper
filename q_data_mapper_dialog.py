@@ -27,6 +27,8 @@ from qgis.PyQt import QtWidgets, QtGui, QtCore
 from qgis.core import QgsProject
 from qgis.gui import QgsExpressionBuilderWidget
 from qgis.core import QgsExpression, QgsExpressionContext, QgsExpressionContextUtils
+from collections import Counter
+from statistics import mean, mode
 
 
 class QDataMapperDialog(QtWidgets.QDialog):
@@ -216,6 +218,16 @@ class LayerAttributesDialog(QtWidgets.QDialog):
         self.btnRemoveMappingRow.clicked.connect(self.remove_mapping_row)
         mapping_layout.addWidget(self.btnRemoveMappingRow)
 
+        # Create a button for analyzing source data and add it to the source layout
+        self.btnAnalyseSourceData = QtWidgets.QPushButton('Analyse Source Data', self)
+        self.btnAnalyseSourceData.clicked.connect(lambda: self.open_data_analysis_dialog('source'))
+        source_layout.addWidget(self.btnAnalyseSourceData)
+
+        # Create a button for analyzing destination data and add it to the destination layout
+        self.btnAnalyseDestinationData = QtWidgets.QPushButton('Analyse Destination Data', self)
+        self.btnAnalyseDestinationData.clicked.connect(lambda: self.open_data_analysis_dialog('destination'))
+        destination_layout.addWidget(self.btnAnalyseDestinationData)
+
         # Final setup for the dialog
         self.setLayout(layout)
         self.setWindowTitle('Layer Attributes')
@@ -305,7 +317,6 @@ class LayerAttributesDialog(QtWidgets.QDialog):
                 else:
                     self.mapping_table.setRowColor(i, QtGui.QColor(255, 0, 0, 50))  # Red
 
-    
     def get_field_data_type(self, field_name, table):
         for row in range(table.rowCount()):
             if table.item(row, 0).text() == field_name:
@@ -333,6 +344,28 @@ class LayerAttributesDialog(QtWidgets.QDialog):
         if dialog.exec_() == QtWidgets.QDialog.Accepted:
             item.setText(dialog.getExpression())
 
+    def open_data_analysis_dialog(self, table_type):
+        selected_row = None
+        layer = None
+        field_name = ''
+        data_type = ''
+
+        if table_type == 'source':
+            selected_row = self.source_table.currentRow()
+            layer = self.get_layer(self.source_layer_name)
+        elif table_type == 'destination':
+            selected_row = self.destination_table.currentRow()
+            layer = self.get_layer(self.destination_layer_name)
+
+        if selected_row is not None and layer is not None:
+            field_name = layer.fields()[selected_row].name()
+            data_type = layer.fields()[selected_row].typeName()
+
+            dialog = DataAnalysisDialog(layer, field_name, data_type, self)
+            dialog.exec_()
+
+    def get_layer(self, layer_name):
+        return next((layer for layer in QgsProject.instance().mapLayers().values() if layer.name() == layer_name), None)
 
 class ExpressionDialog(QtWidgets.QDialog):
     """
@@ -438,3 +471,137 @@ class ExpressionDialog(QtWidgets.QDialog):
     def getExpression(self):
         # Return the current expression
         return self.expressionBuilder.expressionText()
+
+
+class DataAnalysisDialog(QtWidgets.QDialog):
+    def __init__(self, layer, field_name, data_type, parent=None):
+        super(DataAnalysisDialog, self).__init__(parent)
+
+        self.setWindowTitle(f'Data Analysis for {field_name}')
+
+        self.layout = QtWidgets.QVBoxLayout(self)
+
+        # Create labels for field name and data type
+        self.layout.addWidget(QtWidgets.QLabel(f'Field Name: {field_name}'))
+        self.layout.addWidget(QtWidgets.QLabel(f'Data Type: {data_type}'))
+
+        if data_type in ['Text','String']:
+            self.text_analysis(layer, field_name)
+        elif data_type in ["Integer", "Integer64", "Real", "Double", "Long"]:
+            self.numeric_analysis(layer, field_name)
+        elif data_type == "Boolean":
+            self.bool_analysis(self.layer, self.field_name.text())
+        elif data_type in ["Date", "DateTime", "Time"]:
+            self.datetime_analysis(self.layer, self.field_name.text())
+        elif data_type == 'Polygon' or data_type == 'Point' or data_type == 'LineString':  # replace with the appropriate type names for geometry fields
+            self.geometry_analysis(layer, field_name)
+        else:
+            self.layout.addWidget(QtWidgets.QLabel(f'Unsupported data type {data_type}'))
+
+    def text_analysis(self, layer, field_name):
+        # Get all values from field_name in layer
+        values = [feat[field_name] for feat in layer.getFeatures()]
+        
+        # Count occurrences of each value
+        counter = Counter(values)
+        
+        # Get the five most common values
+        most_common_values = counter.most_common(5)
+        
+        # Create a QTableWidget to display the results
+        table = QtWidgets.QTableWidget()
+        table.setRowCount(len(most_common_values))
+        table.setColumnCount(2)
+        table.setHorizontalHeaderLabels(['Value', 'Count'])
+        
+        for i, (value, count) in enumerate(most_common_values):
+            table.setItem(i, 0, QtWidgets.QTableWidgetItem(str(value)))
+            table.setItem(i, 1, QtWidgets.QTableWidgetItem(str(count)))
+
+        # Add the table to the layout
+        self.layout.addWidget(table)
+
+    def numeric_analysis(self, layer, field_name):
+        # Get all values from field_name in layer
+        values = [feat[field_name] for feat in layer.getFeatures()]
+
+        # Calculate statistics
+        average = mean(values)
+        maximum = max(values)
+        minimum = min(values)
+        mode_value = mode(values)
+
+        # Count occurrences of each value
+        counter = Counter(values)
+
+        # Get the five most common values
+        most_common_values = counter.most_common(5)
+
+        # Create a QTableWidget to display the statistics
+        statistics_table = QtWidgets.QTableWidget()
+        statistics_table.setRowCount(4)
+        statistics_table.setColumnCount(2)
+        statistics_table.setHorizontalHeaderLabels(['Property', 'Value'])
+
+        # Add statistics to the table
+        statistics_table.setItem(0, 0, QtWidgets.QTableWidgetItem('Average'))
+        statistics_table.setItem(0, 1, QtWidgets.QTableWidgetItem(str(average)))
+        statistics_table.setItem(1, 0, QtWidgets.QTableWidgetItem('Max'))
+        statistics_table.setItem(1, 1, QtWidgets.QTableWidgetItem(str(maximum)))
+        statistics_table.setItem(2, 0, QtWidgets.QTableWidgetItem('Min'))
+        statistics_table.setItem(2, 1, QtWidgets.QTableWidgetItem(str(minimum)))
+        statistics_table.setItem(3, 0, QtWidgets.QTableWidgetItem('Mode'))
+        statistics_table.setItem(3, 1, QtWidgets.QTableWidgetItem(str(mode_value)))
+
+        # Create a QTableWidget to display the most common values
+        common_values_table = QtWidgets.QTableWidget()
+        common_values_table.setRowCount(len(most_common_values))
+        common_values_table.setColumnCount(2)
+        common_values_table.setHorizontalHeaderLabels(['Value', 'Count'])
+
+        # Add the most common values to the table
+        for i, (value, count) in enumerate(most_common_values):
+            common_values_table.setItem(i, 0, QtWidgets.QTableWidgetItem(str(value)))
+            common_values_table.setItem(i, 1, QtWidgets.QTableWidgetItem(str(count)))
+
+        # Add the tables to the layout
+        self.layout.addWidget(statistics_table)
+        self.layout.addWidget(common_values_table)
+
+    def bool_analysis(self, layer, field_name):
+        # Retrieve all values for the specified field
+        values = [feat[field_name] for feat in layer.getFeatures()]
+
+        # Count occurrences of True and False
+        true_count = values.count(True)
+        false_count = values.count(False)
+
+        # Set data in the statistics table
+        self.statistics_table.setItem(0, 0, QtWidgets.QTableWidgetItem("True"))
+        self.statistics_table.setItem(0, 1, QtWidgets.QTableWidgetItem(str(true_count)))
+        self.statistics_table.setItem(1, 0, QtWidgets.QTableWidgetItem("False"))
+        self.statistics_table.setItem(1, 1, QtWidgets.QTableWidgetItem(str(false_count)))
+
+    def datetime_analysis(self, layer, field_name):
+        # Retrieve all values for the specified field
+        values = [feat[field_name] for feat in layer.getFeatures()]
+
+        # Remove None values
+        values = [value for value in values if value]
+
+        # Get the earliest and latest date and time
+        earliest_date = min(values)
+        latest_date = max(values)
+
+        # Set data in the statistics table
+        self.statistics_table.setItem(0, 0, QtWidgets.QTableWidgetItem("Earliest"))
+        self.statistics_table.setItem(0, 1, QtWidgets.QTableWidgetItem(earliest_date.toString()))
+        self.statistics_table.setItem(1, 0, QtWidgets.QTableWidgetItem("Latest"))
+        self.statistics_table.setItem(1, 1, QtWidgets.QTableWidgetItem(latest_date.toString()))
+
+    def geometry_analysis(self, layer, field_name):
+        # Perform your geometry data analysis here and display the results
+        # This is just a placeholder. Replace with actual code to perform data analysis
+        self.layout.addWidget(QtWidgets.QLabel(f'Performing geometry analysis for {field_name}...'))
+
+
