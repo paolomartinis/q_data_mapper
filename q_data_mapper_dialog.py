@@ -55,10 +55,14 @@ class QDataMapperDialog(QtWidgets.QDialog):
 
         # Combo box for source layer
         self.cbSourceLayer = QtWidgets.QComboBox(self)
+        self.cbSourceLayer.setEditable(True)  # Make the combo box searchable
+        self.cbSourceLayer.setInsertPolicy(QtWidgets.QComboBox.NoInsert)  # Prevent the user from adding new items to the combo box
         layout.addWidget(self.cbSourceLayer)
 
         # Combo box for destination layer
         self.cbDestinationLayer = QtWidgets.QComboBox(self)
+        self.cbDestinationLayer.setEditable(True)  # Make the combo box searchable
+        self.cbDestinationLayer.setInsertPolicy(QtWidgets.QComboBox.NoInsert)  # Prevent the user from adding new items to the combo box
         layout.addWidget(self.cbDestinationLayer)
 
         # Layout for buttons
@@ -78,6 +82,17 @@ class QDataMapperDialog(QtWidgets.QDialog):
         # Populate combo boxes initially
         self.populate_combo_boxes()
 
+    def get_all_layers(self):
+        """
+        Fetches all layers from the interface's layer tree view.
+        Returns a list of layer names ordered alphabetically.
+        """
+        # Fetch all layers from the project's layer tree
+        layers = [layer for layer in QgsProject.instance().mapLayers().values()]
+
+        # Return a list of layer names sorted alphabetically
+        return sorted([layer.name() for layer in layers])
+
     def get_selected_layers(self):
         """
         Fetches selected layers from the interface's layer tree view.
@@ -91,24 +106,29 @@ class QDataMapperDialog(QtWidgets.QDialog):
 
     def populate_combo_boxes(self):
         """
-        Clears and populates the source and destination combo boxes with the currently
-        selected layers. Sets the first layer as the source and the second as the destination.
+        Clears and populates the source and destination combo boxes with all layers. 
+        Sets the first selected layer as the source and the second selected layer as the destination.
         """
-        # Get the currently selected layers and store their names
-        self.selected_layers = self.get_selected_layers()
+        # Get all layers and store their names
+        all_layers = self.get_all_layers()
 
         # Clear the existing items in the combo boxes
         self.cbSourceLayer.clear()
         self.cbDestinationLayer.clear()
 
-        # Add the names of the selected layers to the combo boxes
-        self.cbSourceLayer.addItems(self.selected_layers)
-        self.cbDestinationLayer.addItems(self.selected_layers)
+        # Add the names of all layers to the combo boxes
+        self.cbSourceLayer.addItems(all_layers)
+        self.cbDestinationLayer.addItems(all_layers)
 
-        # Set the current index for the source layer combo box to 0 
-        # and for the destination layer combo box to 1
-        self.cbSourceLayer.setCurrentIndex(0)
-        self.cbDestinationLayer.setCurrentIndex(1)
+        # Get the currently selected layers
+        self.selected_layers = self.get_selected_layers()
+
+        # If there are selected layers, set the first one as the source 
+        # and the second one (if exists) as the destination
+        if self.selected_layers:
+            self.cbSourceLayer.setCurrentText(self.selected_layers[0])
+            if len(self.selected_layers) > 1:
+                self.cbDestinationLayer.setCurrentText(self.selected_layers[1])
 
     def swap_layers(self):
         """
