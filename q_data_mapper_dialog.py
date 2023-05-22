@@ -33,73 +33,116 @@ from statistics import mean, mode
 
 class QDataMapperDialog(QtWidgets.QDialog):
     """
-    Main dialog to select the source and destination layers
+    Main dialog to select the source and destination layers.
     """
+
     def __init__(self, iface, parent=None):
+        """
+        Initializes QDataMapperDialog instance with a given interface and a parent widget.
+        Sets up layout, creates combo boxes for source and destination layer selection, 
+        and creates buttons for swapping layers and starting mapping.
+        """
         super(QDataMapperDialog, self).__init__(parent)
 
+        # Interface object
         self.iface = iface
+
+        # List to hold the names of selected layers
         self.selected_layers = []
 
-        # Create layout
+        # Main layout
         layout = QtWidgets.QVBoxLayout(self)
 
-        # Create source layer combo box
+        # Combo box for source layer
         self.cbSourceLayer = QtWidgets.QComboBox(self)
         layout.addWidget(self.cbSourceLayer)
 
-        # Create destination layer combo box
+        # Combo box for destination layer
         self.cbDestinationLayer = QtWidgets.QComboBox(self)
         layout.addWidget(self.cbDestinationLayer)
 
-        # Create the buttons layout
+        # Layout for buttons
         btn_layout = QtWidgets.QHBoxLayout()
         layout.addLayout(btn_layout)
 
-        # Create the swap button
+        # Swap layers button
         self.btnSwap = QtWidgets.QPushButton('Swap', self)
         self.btnSwap.clicked.connect(self.swap_layers)
         btn_layout.addWidget(self.btnSwap)
 
-        # Create the mapping button
+        # Start mapping button
         self.btnMapData = QtWidgets.QPushButton('Start Mapping', self)
         self.btnMapData.clicked.connect(self.start_mapping)
         btn_layout.addWidget(self.btnMapData)
 
-        # Populate combo boxes and set the current selection
+        # Populate combo boxes initially
         self.populate_combo_boxes()
 
     def get_selected_layers(self):
+        """
+        Fetches selected layers from the interface's layer tree view.
+        Returns a list of layer names.
+        """
+        # Fetch the selected layers from the interface's layer tree view
         layers = self.iface.layerTreeView().selectedLayers()
+
+        # Return a list of layer names
         return [layer.name() for layer in layers]
 
     def populate_combo_boxes(self):
+        """
+        Clears and populates the source and destination combo boxes with the currently
+        selected layers. Sets the first layer as the source and the second as the destination.
+        """
+        # Get the currently selected layers and store their names
         self.selected_layers = self.get_selected_layers()
 
+        # Clear the existing items in the combo boxes
         self.cbSourceLayer.clear()
         self.cbDestinationLayer.clear()
 
+        # Add the names of the selected layers to the combo boxes
         self.cbSourceLayer.addItems(self.selected_layers)
         self.cbDestinationLayer.addItems(self.selected_layers)
 
+        # Set the current index for the source layer combo box to 0 
+        # and for the destination layer combo box to 1
         self.cbSourceLayer.setCurrentIndex(0)
         self.cbDestinationLayer.setCurrentIndex(1)
 
     def swap_layers(self):
+        """
+        Swaps the selected source and destination layers in the combo boxes.
+        """
+        # Get the current text from the source and destination combo boxes
         current_source = self.cbSourceLayer.currentText()
         current_destination = self.cbDestinationLayer.currentText()
+
+        # Swap the current text in the source and destination combo boxes
         self.cbSourceLayer.setCurrentText(current_destination)
         self.cbDestinationLayer.setCurrentText(current_source)
 
     def showEvent(self, event):
-        """Override showEvent to refresh combo boxes every time dialog is opened."""
+        """
+        Overrides the QWidget's showEvent method. 
+        Called every time the dialog is shown. Refreshes the combo boxes.
+        """
+        # Refresh the combo boxes to reflect any changes in the selected layers
         self.populate_combo_boxes()
+        
+        # Call the parent class's showEvent method
         super().showEvent(event)
 
     def start_mapping(self):
+        """
+        Retrieves the names of the source and destination layers, creates a LayerAttributesDialog 
+        for them, displays it, and then closes the current dialog.
+        """
+        # Get the current text (layer name) from the source and destination combo boxes
         source_layer_name = self.cbSourceLayer.currentText()
         destination_layer_name = self.cbDestinationLayer.currentText()
-        
+
+        # Create and show a LayerAttributesDialog using the selected layers
         self.layer_attrs_dialog = LayerAttributesDialog(source_layer_name, destination_layer_name)
         self.layer_attrs_dialog.show()
 
@@ -108,81 +151,130 @@ class QDataMapperDialog(QtWidgets.QDialog):
 
 
 class MappingTableWidget(QtWidgets.QTableWidget):
+    """
+    Widget subclass for a mapping table, used to create a drag-and-drop interface 
+    between a source table and a destination table.
+    """
+
     def __init__(self, source_table, destination_table, parent=None):
+        """
+        Initialize a MappingTableWidget instance with a given source table, 
+        destination table, and optional parent widget.
+        """
         super(MappingTableWidget, self).__init__(parent)
+        
+        # Store the source and destination table references
         self.source_table = source_table
         self.destination_table = destination_table
 
     def count_destination_field(self, field_name):
+        """
+        Counts the number of times a specific field name appears in the destination column of the mapping table.
+        """
+        # Initialize count to 0
         count = 0
+
+        # Loop through all rows in the table
         for i in range(self.rowCount()):
+            # Check if there's an item in the destination field column (index 2) and 
+            # if its text matches the given field name
             if self.item(i, 2) and self.item(i, 2).text() == field_name:
+                # Increment the count
                 count += 1
+                
         return count
 
     def dropEvent(self, event):
+        """
+        Handles drop events for drag-and-drop operations between the source and destination tables.
+        """
+        # Check if the mimeData format of the event indicates that it comes from a table model
         if event.mimeData().hasFormat('application/x-qabstractitemmodeldatalist'):
+            # Get a reference to the table where the item is being dropped
             dropping_table = self
+
+            # Get a reference to the table where the item was dragged from
             source_table = event.source()
+
+            # Get the row number of the item being dragged
             dropped_row = source_table.currentRow()
+
+            # Get the field name of the item being dragged
             field_item = source_table.item(dropped_row, 0)
             field_name = field_item.text()
 
-            # Check if this field is already mapped when dropping from destination_table
+            # If the item comes from the destination table, check if the field is already mapped
             if source_table == self.destination_table:
                 if self.count_destination_field(field_name) > 0:
+                    # If the field is already mapped, reject the drop event
                     return
 
+            # Get the drop position and the index of the item on which the new item was dropped
             dropped_point = event.pos()
             dropped_index = dropping_table.indexAt(dropped_point)
             dropped_on_row = dropped_index.row()
 
+            # If the item was dropped on an empty area, create a new row at the end of the table
             if dropped_on_row == -1:
                 dropped_on_row = dropping_table.rowCount()
                 dropping_table.insertRow(dropped_on_row)
                 dropping_table.setItem(dropped_on_row, 0 if source_table == self.source_table else 1, QtWidgets.QTableWidgetItem(""))
 
+            # Create a new QTableWidgetItem for the dropped item
             field_item = QtWidgets.QTableWidgetItem(field_name)
 
+            # If the item comes from the source table, set the dropped item in the source field column
+            # If the item comes from the destination table, set the dropped item in the destination field column
             if source_table == self.source_table:
                 dropping_table.setItem(dropped_on_row, 0, field_item)
             elif source_table == self.destination_table:
                 dropping_table.setItem(dropped_on_row, 2, field_item)
 
+        # Refresh the colors of the table after dropping the item
         self.parent().refresh_table_colors()
+
+        # Accept the drop event
         event.accept()
 
     def setRowColor(self, row, color):
+        """
+        Sets the background color of a specific row in the table.
+        """
+        # Loop through all columns in the row
         for col in range(self.columnCount()):
+            # Get the item at the given row and column
             item = self.item(row, col)
+
+            # If the item exists, set its background color
             if item is not None:
                 item.setBackground(color)
 
 
 class LayerAttributesDialog(QtWidgets.QDialog):
     """
-    This class represents the main dialog of the plugin
+    A QDialog subclass representing the main dialog of the plugin. 
+    It manages source and destination layers and facilitates mapping of attributes between them.
     """
 
     def __init__(self, source_layer_name, destination_layer_name, parent=None):
         super(LayerAttributesDialog, self).__init__(parent)
 
-        # Storing layer names
+        # Store layer names
         self.source_layer_name = source_layer_name
         self.destination_layer_name = destination_layer_name
 
-        # Creating labels for the three tables
+        # Create labels for tables
         source_label = QtWidgets.QLabel("Source Table", self)
         mapping_label = QtWidgets.QLabel("Mapping Table", self)
         destination_label = QtWidgets.QLabel("Destination Table", self)
 
-        # Initializing tables
+        # Initialize tables
         self.source_table = QtWidgets.QTableWidget(self)
         self.destination_table = QtWidgets.QTableWidget(self)
-        # MappingTableWidget seems to be a custom widget not defined in the provided code
+        # Initialize MappingTableWidget which is a custom widget (see the relative class)
         self.mapping_table = MappingTableWidget(self.source_table, self.destination_table, self)
 
-        # Populating the tables with fields from the respective layers
+        # Populate the tables with fields from the respective layers
         self.populate_tables(source_layer_name, destination_layer_name)
 
         # Setting up table properties for drag and drop operations
@@ -236,123 +328,314 @@ class LayerAttributesDialog(QtWidgets.QDialog):
         self.btnAnalyseDestinationData.clicked.connect(lambda: self.open_data_analysis_dialog('destination'))
         destination_layout.addWidget(self.btnAnalyseDestinationData)
 
+        # Create a button to manually check common values for source data
+        self.source_check_button = QtWidgets.QPushButton("Check Common Values", self)
+        self.source_check_button.clicked.connect(self.check_source_values)
+        source_layout.addWidget(self.source_check_button)
+
+        # Create a button to manually check common values for destination data
+        self.destination_check_button = QtWidgets.QPushButton("Check Common Values", self)
+        self.destination_check_button.clicked.connect(self.check_destination_values)
+        destination_layout.addWidget(self.destination_check_button)
+
         # Final setup for the dialog
         self.setLayout(layout)
         self.setWindowTitle('Layer Attributes')
         self.resize(1200, 800)
 
-    def populate_tables(self, source_layer_name, destination_layer_name):
-        source_layer = next((layer for layer in QgsProject.instance().mapLayers().values()
-                             if layer.name() == source_layer_name), None)
-        destination_layer = next((layer for layer in QgsProject.instance().mapLayers().values()
-                                  if layer.name() == destination_layer_name), None)
+    def get_layer(self, layer_name):
+        """
+        Retrieve a layer by its name from the current project.
+        """
+        return next((layer for layer in QgsProject.instance().mapLayers().values() if layer.name() == layer_name), None)
 
-        if source_layer is None or destination_layer is None:
+    def populate_tables(self, source_layer_name, destination_layer_name):
+        """
+        Populate the source and destination tables with the fields from the source and destination layers,
+        and set up the mapping table.
+        """
+        # Get the source and destination layers by their names
+        self.source_layer = self.get_layer(source_layer_name)
+        self.destination_layer = self.get_layer(destination_layer_name)
+
+        # If either layer is not found, do nothing
+        if self.source_layer is None or self.destination_layer is None:
             return
 
-        source_fields = source_layer.fields()
-        destination_fields = destination_layer.fields()
+        # Get the fields (attributes) of the source and destination layers
+        source_fields = self.source_layer.fields()
+        destination_fields = self.destination_layer.fields()
 
-        self.source_table.setColumnCount(2)
-        self.source_table.setHorizontalHeaderLabels(['Field Name', 'Data Type'])
+        # Set up the source table
+        self.source_table.setColumnCount(3)
+        self.source_table.setHorizontalHeaderLabels(['Field Name', 'Data Type', 'Common Value'])
         self.source_table.setRowCount(len(source_fields))
 
+        # Populate the source table with the fields of the source layer
         for idx, field in enumerate(source_fields):
             field_name_item = QtWidgets.QTableWidgetItem(field.name())
             data_type_item = QtWidgets.QTableWidgetItem(field.typeName())
 
             self.source_table.setItem(idx, 0, field_name_item)
             self.source_table.setItem(idx, 1, data_type_item)
+            self.populate_common_value(self.source_layer, field, self.source_table, idx, 2)
 
-        self.destination_table.setColumnCount(2)
-        self.destination_table.setHorizontalHeaderLabels(['Field Name', 'Data Type'])
+        # Set up the destination table
+        self.destination_table.setColumnCount(3)
+        self.destination_table.setHorizontalHeaderLabels(['Field Name', 'Data Type', 'Common Value'])
         self.destination_table.setRowCount(len(destination_fields))
 
+        # Populate the destination table with the fields of the destination layer
         for idx, field in enumerate(destination_fields):
             field_name_item = QtWidgets.QTableWidgetItem(field.name())
             data_type_item = QtWidgets.QTableWidgetItem(field.typeName())
 
             self.destination_table.setItem(idx, 0, field_name_item)
             self.destination_table.setItem(idx, 1, data_type_item)
+            self.populate_common_value(self.destination_layer, field, self.destination_table, idx, 2)
 
+        # Set up the mapping table
         self.mapping_table.setColumnCount(3)
         self.mapping_table.setHorizontalHeaderLabels(['Source Field', 'Transformation', 'Destination Field'])
         self.mapping_table.setRowCount(0)
+
+        # Populate the mapping table with the mappings between the fields of the source and destination layers
         self.populate_mapping_table()
+
+        # Update the colors of the tables based on their current states
         self.refresh_table_colors()
 
+    def get_most_common_value(self, layer, field_name):
+        """
+        Get the most common value in the field. 
+        Returns:
+            Most common value in the field, or a tuple ("all_null" or "all_different") 
+            if all values are null or all values are different, respectively.
+        """
+        values = [feature[field_name] for feature in layer.getFeatures()]
+
+        # Adjust to consider 'NULL' as None (QGIS data handling)
+        values = [None if QtCore.QVariant(v).isNull() else v for v in values]
+
+        # Check if all values are None
+        if all(v is None for v in values):
+            return ("all_null",)
+        # Check if all values are unique
+        elif len(set(values)) == len(values):
+            return ("all_different",)
+        else:
+            most_common_value = max(set(values), key=values.count)
+            return most_common_value
+
+    def populate_common_value(self, layer, field, table_widget, row_index, col_index, limit=10000):
+        """
+        Populate the "Common Value" column of the table with the most common value of the field. 
+        :param layer: The layer containing the field
+        :param field: The field to analyze
+        :param table_widget: The table to populate
+        :param row_index: The row in the table corresponding to the field
+        :param col_index: The column index where to insert the common value
+        :param limit: The limit number of features for calculating common value. Default is 10,000
+        """
+        # Get the count of features in the layer
+        feature_count = layer.featureCount()
+
+        # If the feature count is within the limit
+        if feature_count <= limit:
+            # Get the most common value of the field
+            common_value = self.get_most_common_value(layer, field.name())
+            
+            # If the common value is a tuple
+            if isinstance(common_value, tuple):
+                if common_value[0] == "all_null":
+                    # Set the item as "All NULL" if all values are null
+                    item = QtWidgets.QTableWidgetItem("All NULL")
+                elif common_value[0] == "all_different":
+                    # Set the item as "All different" if all values are different
+                    item = QtWidgets.QTableWidgetItem("All different")
+            else:
+                # Set the item as the common value
+                item = QtWidgets.QTableWidgetItem(str(common_value))
+
+            # Set the item in the table at the specified row and column index
+            table_widget.setItem(row_index, col_index, item)
+
+    def check_source_values(self):
+        """
+        Check the common values for the source layer manually
+        """
+        self.source_layer = self.get_layer(self.source_layer_name)
+        self.check_common_values(self.source_table, self.source_layer)
+
+    def check_destination_values(self):
+        """
+        Check the common values for the destination layer manually
+        """
+        self.destination_layer = self.get_layer(self.destination_layer_name)
+        self.check_common_values(self.destination_table, self.destination_layer)
+
+    def check_common_values(self, table_widget, layer):
+        """
+        Manually check common values for a given layer and table widget
+        Values limit is set to 10^100
+        """
+        fields = layer.fields()
+        for i, field in enumerate(fields):
+            self.populate_common_value(layer, field, table_widget, i, 2, limit=10^100)
+
     def populate_mapping_table(self):
+        """
+        Populate the mapping table by checking each field in the source table and the destination table.
+        If the field in the source table matches a field in the destination table, 
+        a row is added in the mapping table with the matching field name in both the source and destination column.
+        An empty transformation is set for each of these rows.
+        """
+        # Iterate over each row in the source table
         for i in range(self.source_table.rowCount()):
+            # Get the field from the source table
             source_field = self.source_table.item(i, 0).text()
+
+            # Iterate over each row in the destination table
             for j in range(self.destination_table.rowCount()):
+                # Get the field from the destination table
                 destination_field = self.destination_table.item(j, 0).text()
+
+                # If the source field matches the destination field
                 if source_field == destination_field:
+                    # Insert a new row at the end of the mapping table
                     self.mapping_table.insertRow(self.mapping_table.rowCount())
+
+                    # Set the source field in the first column of the new row
                     self.mapping_table.setItem(self.mapping_table.rowCount() - 1, 0, QtWidgets.QTableWidgetItem(source_field))
+
+                    # Set an empty transformation in the second column of the new row
                     self.mapping_table.setItem(self.mapping_table.rowCount() - 1, 1, QtWidgets.QTableWidgetItem(""))  # empty transformation
+
+                    # Set the destination field in the third column of the new row
                     self.mapping_table.setItem(self.mapping_table.rowCount() - 1, 2, QtWidgets.QTableWidgetItem(destination_field))
 
     def refresh_table_colors(self):
+        """
+        Update the colors in the mapping, source, and destination tables to visually indicate relationships and issues.
+        Rows in the mapping table are colored green if the data types of the source and destination fields match, and red otherwise.
+        Fields in the source and destination tables that are used in the mapping table are highlighted in green.
+        If a source field is used more than once in the mapping table, its name in the source table is made bold.
+        """
+
+        # Iterate over each row in the mapping table
         for i in range(self.mapping_table.rowCount()):
+            # Get the source field item and destination field item from the current row in the mapping table
             source_field_item = self.mapping_table.item(i, 0)
             destination_field_item = self.mapping_table.item(i, 2)
 
-            # Check if item exists in mapping_table
+            # If a source field item exists in the current row of the mapping table
             if source_field_item is not None:
+                # Count how many times the current source field is used in the mapping table
                 source_field_count = sum(1 for k in range(self.mapping_table.rowCount())
                                          if self.mapping_table.item(k, 0) is not None and 
                                          self.mapping_table.item(k, 0).text() == source_field_item.text())
+
+                # Iterate over each row in the source table
                 for j in range(self.source_table.rowCount()):
+                    # If the current source field matches a field in the source table
                     if self.source_table.item(j, 0).text() == source_field_item.text():
+                        # Color the corresponding row in the source table green
                         for col in range(self.source_table.columnCount()):
-                            self.source_table.item(j, col).setBackground(QtGui.QColor(0, 255, 0, 50))  # Green
+                            if self.source_table.item(j, col) is not None:
+                                self.source_table.item(j, col).setBackground(QtGui.QColor(0, 255, 0, 50))  # Green
+                        # If the current source field is used more than once in the mapping table, make its name in the source table bold
                         if source_field_count > 1:
-                            bold_font = QtGui.QFont()
-                            bold_font.setBold(True)
-                            self.source_table.item(j, 0).setFont(bold_font)
+                            if self.source_table.item(j, 0) is not None:
+                                bold_font = QtGui.QFont()
+                                bold_font.setBold(True)
+                                self.source_table.item(j, 0).setFont(bold_font)
 
+            # If a destination field item exists in the current row of the mapping table
             if destination_field_item is not None:
+                # Iterate over each row in the destination table
                 for j in range(self.destination_table.rowCount()):
+                    # If the current destination field matches a field in the destination table
                     if self.destination_table.item(j, 0).text() == destination_field_item.text():
+                        # Color the corresponding row in the destination table green
                         for col in range(self.destination_table.columnCount()):
-                            self.destination_table.item(j, col).setBackground(QtGui.QColor(0, 255, 0, 50))  # Green
+                            if self.destination_table.item(j, col) is not None:
+                                self.destination_table.item(j, col).setBackground(QtGui.QColor(0, 255, 0, 50))  # Green
 
+            # If both a source field item and a destination field item exist in the current row of the mapping table
             if source_field_item is not None and destination_field_item is not None:
+                # Get the data types of the source field and the destination field
                 source_data_type = self.get_field_data_type(source_field_item.text(), self.source_table)
                 destination_data_type = self.get_field_data_type(destination_field_item.text(), self.destination_table)
+                # If the data types match, color the row in the mapping table green, otherwise color it red
                 if source_data_type == destination_data_type:
                     self.mapping_table.setRowColor(i, QtGui.QColor(0, 255, 0, 50))  # Green
                 else:
                     self.mapping_table.setRowColor(i, QtGui.QColor(255, 0, 0, 50))  # Red
 
     def get_field_data_type(self, field_name, table):
+        """
+        Return the data type of a field in a table.
+
+        Args:
+            field_name (str): The name of the field.
+            table (QTableWidget): The table containing the field.
+
+        Returns:
+            str: The data type of the field, or None if the field is not found.
+        """
+        # Iterate over each row in the table
         for row in range(table.rowCount()):
+            # If the field name in the current row matches the given field name
             if table.item(row, 0).text() == field_name:
+                # Return the data type of the field
                 return table.item(row, 1).text()
+        # If the field is not found in the table, return None
         return None
 
     def remove_mapping_row(self):
+        """
+        Remove the currently selected row from the mapping table and refresh the table colors.
+        If no row is currently selected, do nothing.
+        """
+        # Get the currently selected row in the mapping table
         currentRow = self.mapping_table.currentRow()
+        # If a row is currently selected
         if currentRow != -1:
+            # Remove the selected row from the mapping table
             self.mapping_table.removeRow(currentRow)
+            # Refresh the table colors to reflect the change
             self.refresh_table_colors()
 
     def open_expression_dialog(self, row, column):
-        if column == 1:  # Only handle clicks on the Transformation column
+        """
+        Open the expression dialog for the specified row and column in the mapping table.
+
+        Args:
+            row (int): The row index in the mapping table.
+            column (int): The column index in the mapping table.
+        """
+        # Only handle clicks on the Transformation column (column index 1)
+        if column == 1:
             item = self.mapping_table.item(row, column)
-            source_field_name = self.mapping_table.item(row, column-1)
+            source_field_name = self.mapping_table.item(row, column - 1)
             source_layer = next((layer for layer in QgsProject.instance().mapLayers().values()
                                 if layer.name() == self.source_layer_name), None)
+        
         # Get the current expression
         current_expression = None
         if item:
             current_expression = item.text()
 
+        # Open the expression dialog
         dialog = ExpressionDialog(source_field_name, source_layer, current_expression, self)
         if dialog.exec_() == QtWidgets.QDialog.Accepted:
             item.setText(dialog.getExpression())
 
     def open_data_analysis_dialog(self, table_type):
+        """
+        Open the data analysis dialog for the specified table type.
+        Args: table_type (str): The type of the table, either 'source' or 'destination'.
+        """
         selected_row = None
         layer = None
         field_name = ''
@@ -369,11 +652,23 @@ class LayerAttributesDialog(QtWidgets.QDialog):
             field_name = layer.fields()[selected_row].name()
             data_type = layer.fields()[selected_row].typeName()
 
+            # Open the data analysis dialog
             dialog = DataAnalysisDialog(layer, field_name, data_type, self)
             dialog.exec_()
 
     def get_layer(self, layer_name):
-        return next((layer for layer in QgsProject.instance().mapLayers().values() if layer.name() == layer_name), None)
+        """
+        Retrieve a QgsVectorLayer based on its name from the QgsProject.
+        Args: layer_name (str): The name of the layer to retrieve.
+        Returns: QgsVectorLayer or None: The QgsVectorLayer object if found, or None if not found.
+        """
+        # Iterate over the QgsMapLayer registry in QgsProject and find the layer with matching name
+        for layer in QgsProject.instance().mapLayers().values():
+            if layer.name() == layer_name:
+                return layer
+        # If no matching layer is found, return None
+        return None
+
 
 class ExpressionDialog(QtWidgets.QDialog):
     """
