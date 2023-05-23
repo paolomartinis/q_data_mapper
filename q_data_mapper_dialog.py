@@ -29,7 +29,36 @@ from qgis.gui import QgsExpressionBuilderWidget
 from qgis.core import QgsExpression, QgsExpressionContext, QgsExpressionContextUtils
 from collections import Counter
 from statistics import mean, mode
+import json
+import os
 
+
+# Get the current script directory
+script_dir = os.path.dirname(os.path.realpath(__file__))
+
+# Path to the settings file
+settings_file = os.path.join(script_dir, 'settings.json')
+
+
+# Function to save settings to a file
+def save_settings(settings, filename):
+    with open(filename, 'w') as f:
+        json.dump(settings, f)
+
+# Function to load settings from a file
+def load_settings(filename):
+    with open(filename, 'r') as f:
+        return json.load(f)
+
+# Function to get values out of QVariant types
+def get_value(data_type, feature, field_name):
+    value = feature[field_name]
+    if type(value) == QtCore.QVariant:
+        if value.isNull():
+            return None
+        return value.toFloat()[0] if value.canConvert(QtCore.QVariant.Double) else value.value()
+    else:
+        return value
 
 class QDataMapperDialog(QtWidgets.QDialog):
     """
@@ -78,6 +107,12 @@ class QDataMapperDialog(QtWidgets.QDialog):
         self.btnMapData = QtWidgets.QPushButton('Start Mapping', self)
         self.btnMapData.clicked.connect(self.start_mapping)
         btn_layout.addWidget(self.btnMapData)
+
+        # Checkbox for initial calculation of common values
+        self.cbInitCommonValue = QtWidgets.QCheckBox('Initialize common value calculations', self)
+        self.load_init_common_value()
+        self.cbInitCommonValue.stateChanged.connect(self.update_init_common_value)
+        layout.addWidget(self.cbInitCommonValue)
 
         # Populate combo boxes initially
         self.populate_combo_boxes()
@@ -153,6 +188,22 @@ class QDataMapperDialog(QtWidgets.QDialog):
         # Call the parent class's showEvent method
         super().showEvent(event)
 
+    def save_init_common_value(self):
+        settings = {'init_common_value': self.init_common_value}
+        save_settings(settings, settings_file)
+
+    def load_init_common_value(self):
+        settings = load_settings(settings_file)
+        self.init_common_value = settings.get('init_common_value', False)
+        self.cbInitCommonValue.setChecked(self.init_common_value)
+
+    def update_init_common_value(self, state):
+        """
+        Updates the init_common_value variable based on the state of the checkbox.
+        """
+        self.init_common_value = bool(state)
+        self.save_init_common_value()
+
     def start_mapping(self):
         """
         Retrieves the names of the source and destination layers, creates a LayerAttributesDialog 
@@ -163,7 +214,7 @@ class QDataMapperDialog(QtWidgets.QDialog):
         destination_layer_name = self.cbDestinationLayer.currentText()
 
         # Create and show a LayerAttributesDialog using the selected layers
-        self.layer_attrs_dialog = LayerAttributesDialog(source_layer_name, destination_layer_name)
+        self.layer_attrs_dialog = LayerAttributesDialog(source_layer_name, destination_layer_name, self.init_common_value)
         self.layer_attrs_dialog.show()
 
         # Close the QDataMapperDialog after showing the LayerAttributesDialog
@@ -276,17 +327,25 @@ class LayerAttributesDialog(QtWidgets.QDialog):
     It manages source and destination layers and facilitates mapping of attributes between them.
     """
 
-    def __init__(self, source_layer_name, destination_layer_name, parent=None):
+    def __init__(self, source_layer_name, destination_layer_name, init_common_value, parent=None):
         super(LayerAttributesDialog, self).__init__(parent)
 
         # Store layer names
         self.source_layer_name = source_layer_name
         self.destination_layer_name = destination_layer_name
 
-        # Create labels for tables
-        source_label = QtWidgets.QLabel("Source Table", self)
-        mapping_label = QtWidgets.QLabel("Mapping Table", self)
-        destination_label = QtWidgets.QLabel("Destination Table", self)
+        # Setup the most common value calculation state
+        self.init_common_value = init_common_value
+
+        # Create title labels for tables
+        source_label = QtWidgets.QLabel(f"<b>Source Table:</b> {source_layer_name}", self)
+        mapping_label = QtWidgets.QLabel("<b>Mapping Table</b>", self)
+        destination_label = QtWidgets.QLabel(f"<b>Destination Table:</b> {destination_layer_name}", self)
+
+        # Create additional details labels
+        self.source_details_label = QtWidgets.QLabel(self)
+        self.destination_details_label = QtWidgets.QLabel(self)
+        self.mapping_details_label = QtWidgets.QLabel(self)
 
         # Initialize tables
         self.source_table = QtWidgets.QTableWidget(self)
@@ -317,17 +376,24 @@ class LayerAttributesDialog(QtWidgets.QDialog):
         self.mapping_table.setDragDropOverwriteMode(False)
         self.mapping_table.cellDoubleClicked.connect(self.open_expression_dialog)
 
+        # Connect signals to update the mapping label when rows are inserted or removed
+        self.mapping_table.model().rowsInserted.connect(self.update_mapping_label)
+        self.mapping_table.model().rowsRemoved.connect(self.update_mapping_label)
+
         # Setting up layout for the dialog
         # The three tables and their labels are placed side by side horizontally
         layout = QtWidgets.QHBoxLayout(self)
         source_layout = QtWidgets.QVBoxLayout()
         source_layout.addWidget(source_label)
+        source_layout.addWidget(self.source_details_label)
         source_layout.addWidget(self.source_table)
         mapping_layout = QtWidgets.QVBoxLayout()
         mapping_layout.addWidget(mapping_label)
+        mapping_layout.addWidget(self.mapping_details_label)
         mapping_layout.addWidget(self.mapping_table)
         destination_layout = QtWidgets.QVBoxLayout()
         destination_layout.addWidget(destination_label)
+        destination_layout.addWidget(self.destination_details_label)
         destination_layout.addWidget(self.destination_table)
         layout.addLayout(source_layout)
         layout.addLayout(mapping_layout)
@@ -337,16 +403,6 @@ class LayerAttributesDialog(QtWidgets.QDialog):
         self.btnRemoveMappingRow = QtWidgets.QPushButton('Remove Mapping', self)
         self.btnRemoveMappingRow.clicked.connect(self.remove_mapping_row)
         mapping_layout.addWidget(self.btnRemoveMappingRow)
-
-        # Create a button for analyzing source data and add it to the source layout
-        self.btnAnalyseSourceData = QtWidgets.QPushButton('Analyse Source Data', self)
-        self.btnAnalyseSourceData.clicked.connect(lambda: self.open_data_analysis_dialog('source'))
-        source_layout.addWidget(self.btnAnalyseSourceData)
-
-        # Create a button for analyzing destination data and add it to the destination layout
-        self.btnAnalyseDestinationData = QtWidgets.QPushButton('Analyse Destination Data', self)
-        self.btnAnalyseDestinationData.clicked.connect(lambda: self.open_data_analysis_dialog('destination'))
-        destination_layout.addWidget(self.btnAnalyseDestinationData)
 
         # Create a button to manually check common values for source data
         self.source_check_button = QtWidgets.QPushButton("Check Common Values", self)
@@ -358,6 +414,16 @@ class LayerAttributesDialog(QtWidgets.QDialog):
         self.destination_check_button.clicked.connect(self.check_destination_values)
         destination_layout.addWidget(self.destination_check_button)
 
+        # Create a button for analyzing source data and add it to the source layout
+        self.btnAnalyseSourceData = QtWidgets.QPushButton('Analyse Source Data', self)
+        self.btnAnalyseSourceData.clicked.connect(lambda: self.open_data_analysis_dialog('source'))
+        source_layout.addWidget(self.btnAnalyseSourceData)
+
+        # Create a button for analyzing destination data and add it to the destination layout
+        self.btnAnalyseDestinationData = QtWidgets.QPushButton('Analyse Destination Data', self)
+        self.btnAnalyseDestinationData.clicked.connect(lambda: self.open_data_analysis_dialog('destination'))
+        destination_layout.addWidget(self.btnAnalyseDestinationData)
+
         # Final setup for the dialog
         self.setLayout(layout)
         self.setWindowTitle('Layer Attributes')
@@ -365,9 +431,31 @@ class LayerAttributesDialog(QtWidgets.QDialog):
 
     def get_layer(self, layer_name):
         """
-        Retrieve a layer by its name from the current project.
+        Retrieve a QgsVectorLayer based on its name from the QgsProject.
+        Args: layer_name (str): The name of the layer to retrieve.
+        Returns: QgsVectorLayer or None: The QgsVectorLayer object if found, or None if not found.
         """
-        return next((layer for layer in QgsProject.instance().mapLayers().values() if layer.name() == layer_name), None)
+        # Iterate over the QgsMapLayer registry in QgsProject and find the layer with matching name
+        for layer in QgsProject.instance().mapLayers().values():
+            if layer.name() == layer_name:
+                return layer
+        # If no matching layer is found, return None
+        return None
+
+    def update_labels(self):
+        """
+        Update additional details labels (placed under the table titles)
+        """
+        # Fetch layer objects by name
+        source_layer = self.get_layer(self.source_layer_name)
+        destination_layer = self.get_layer(self.destination_layer_name)
+
+        # Update source and destination labels
+        self.source_details_label.setText(f"Type: {source_layer.dataProvider().name()}, Feature count: {source_layer.featureCount()}")
+        self.destination_details_label.setText(f"Type: {destination_layer.dataProvider().name()}, Feature count: {destination_layer.featureCount()}")
+
+        # Update mapping label
+        self.mapping_details_label.setText(f"Row count: {self.mapping_table.rowCount()}")
 
     def populate_tables(self, source_layer_name, destination_layer_name):
         """
@@ -398,7 +486,8 @@ class LayerAttributesDialog(QtWidgets.QDialog):
 
             self.source_table.setItem(idx, 0, field_name_item)
             self.source_table.setItem(idx, 1, data_type_item)
-            self.populate_common_value(self.source_layer, field, self.source_table, idx, 2)
+            if self.init_common_value:
+                self.populate_common_value(self.source_layer, field, self.source_table, idx, 2)
 
         # Set up the destination table
         self.destination_table.setColumnCount(3)
@@ -412,7 +501,8 @@ class LayerAttributesDialog(QtWidgets.QDialog):
 
             self.destination_table.setItem(idx, 0, field_name_item)
             self.destination_table.setItem(idx, 1, data_type_item)
-            self.populate_common_value(self.destination_layer, field, self.destination_table, idx, 2)
+            if self.init_common_value:
+                self.populate_common_value(self.destination_layer, field, self.destination_table, idx, 2)
 
         # Set up the mapping table
         self.mapping_table.setColumnCount(3)
@@ -424,6 +514,13 @@ class LayerAttributesDialog(QtWidgets.QDialog):
 
         # Update the colors of the tables based on their current states
         self.refresh_table_colors()
+
+        # Update additional details labels
+        self.update_labels()
+
+    def update_mapping_label(self):
+        # Update the mapping label with the current row count
+        self.mapping_details_label.setText(f"Row count: {self.mapping_table.rowCount()}")
 
     def get_most_common_value(self, layer, field_name):
         """
@@ -464,7 +561,6 @@ class LayerAttributesDialog(QtWidgets.QDialog):
         if feature_count <= limit:
             # Get the most common value of the field
             common_value = self.get_most_common_value(layer, field.name())
-            
             # If the common value is a tuple
             if isinstance(common_value, tuple):
                 if common_value[0] == "all_null":
@@ -484,24 +580,39 @@ class LayerAttributesDialog(QtWidgets.QDialog):
         """
         Check the common values for the source layer manually
         """
-        self.source_layer = self.get_layer(self.source_layer_name)
-        self.check_common_values(self.source_table, self.source_layer)
+        source_layer = self.get_layer(self.source_layer_name)
+        self.check_common_values(self.source_table, source_layer)
 
     def check_destination_values(self):
         """
         Check the common values for the destination layer manually
         """
-        self.destination_layer = self.get_layer(self.destination_layer_name)
-        self.check_common_values(self.destination_table, self.destination_layer)
+        destination_layer = self.get_layer(self.destination_layer_name)
+        self.check_common_values(self.destination_table, destination_layer)
 
     def check_common_values(self, table_widget, layer):
         """
         Manually check common values for a given layer and table widget
         Values limit is set to 10^100
         """
+        # Get the layer fields
         fields = layer.fields()
+
+        # Call the function to show the progress dialog
+        progression = self.show_progress_dialog(len(fields), message = "Calculating common values for layer")
+        # Update the dialog as the operation progresses
         for i, field in enumerate(fields):
-            self.populate_common_value(layer, field, table_widget, i, 2, limit=10^100)
+            # Perform part of the operation
+            self.populate_common_value(layer, field, table_widget, i, 2, limit=10**100)
+            # Update the progress dialog
+            progression.setValue(i)
+            # Process events to keep the UI responsive
+            QtWidgets.QApplication.processEvents()
+            # If the user clicked the Cancel button, break out of the loop
+            if progression.wasCanceled():
+                break
+        # Close the progress dialog
+        progression.close()
 
     def populate_mapping_table(self):
         """
@@ -671,23 +782,26 @@ class LayerAttributesDialog(QtWidgets.QDialog):
         if selected_row is not None and layer is not None:
             field_name = layer.fields()[selected_row].name()
             data_type = layer.fields()[selected_row].typeName()
+            print(layer, data_type)
 
             # Open the data analysis dialog
-            dialog = DataAnalysisDialog(layer, field_name, data_type, self)
+            dialog = DataAnalysisDialog(layer, field_name, data_type, parent=self)
             dialog.exec_()
 
-    def get_layer(self, layer_name):
+    def show_progress_dialog(self, max_value, message="Working on something..."):
         """
-        Retrieve a QgsVectorLayer based on its name from the QgsProject.
-        Args: layer_name (str): The name of the layer to retrieve.
-        Returns: QgsVectorLayer or None: The QgsVectorLayer object if found, or None if not found.
+        Show a progress dialog for long running operations
         """
-        # Iterate over the QgsMapLayer registry in QgsProject and find the layer with matching name
-        for layer in QgsProject.instance().mapLayers().values():
-            if layer.name() == layer_name:
-                return layer
-        # If no matching layer is found, return None
-        return None
+        # Create a QProgressDialog instance
+        progress = QtWidgets.QProgressDialog(message, "Cancel", 0, max_value)
+
+        # Set the WindowStaysOnTopHint flag to make the dialog stay on top
+        progress.setWindowFlags(progress.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+
+        # Show the dialog
+        progress.show()
+
+        return progress
 
 
 class ExpressionDialog(QtWidgets.QDialog):
@@ -808,18 +922,32 @@ class DataAnalysisDialog(QtWidgets.QDialog):
         self.layout.addWidget(QtWidgets.QLabel(f'Field Name: {field_name}'))
         self.layout.addWidget(QtWidgets.QLabel(f'Data Type: {data_type}'))
 
-        if data_type in ['Text','String']:
+        # Setup data types lists
+        dt_textuals = []
+        dt_textuals.extend(['Text','String']) # common QGIS
+        dt_textuals.extend(['varchar']) # common PostgreSQL
+        dt_numeric = []
+        dt_numeric.extend(['Integer', 'Integer64', 'Real', 'Double', 'Long']) # common QGIS
+        dt_numeric.extend(['int2', 'int4', 'int8', 'numeric', 'float8']) # common PostgreSQL
+        dt_datetime = []
+        dt_datetime.extend(['Date', 'DateTime', 'Time']) # common QGIS
+        dt_datetime.extend(['timestamptz']) # common PostgreSQL
+        dt_bool = []
+        dt_bool.extend(['Boolean']) # common QGIS
+        dt_bool.extend(['bool']) # common PostgreSQL
+
+        if data_type in dt_textuals:
             self.text_analysis(layer, field_name)
-        elif data_type in ["Integer", "Integer64", "Real", "Double", "Long"]:
-            self.numeric_analysis(layer, field_name)
-        elif data_type == "Boolean":
-            self.bool_analysis(self.layer, self.field_name.text())
-        elif data_type in ["Date", "DateTime", "Time"]:
-            self.datetime_analysis(self.layer, self.field_name.text())
-        elif data_type == 'Polygon' or data_type == 'Point' or data_type == 'LineString':  # replace with the appropriate type names for geometry fields
+        elif data_type in dt_numeric:
+            self.numeric_analysis(layer, data_type, field_name)
+        elif data_type in dt_bool:
+            self.bool_analysis(layer, field_name)
+        elif data_type in dt_datetime:
+            self.datetime_analysis(layer, field_name)
+        elif data_type == 'Polygon' or data_type == 'Point' or data_type == 'LineString':  # TODO!
             self.geometry_analysis(layer, field_name)
         else:
-            self.layout.addWidget(QtWidgets.QLabel(f'Unsupported data type {data_type}'))
+            self.layout.addWidget(QtWidgets.QLabel(f'Unsupported data type <b>{data_type}<\b>'))
 
     def text_analysis(self, layer, field_name):
         # Get all values from field_name in layer
@@ -844,15 +972,22 @@ class DataAnalysisDialog(QtWidgets.QDialog):
         # Add the table to the layout
         self.layout.addWidget(table)
 
-    def numeric_analysis(self, layer, field_name):
+    def numeric_analysis(self, layer, data_type, field_name):
         # Get all values from field_name in layer
-        values = [feat[field_name] for feat in layer.getFeatures()]
+        values = [get_value(data_type, feat, field_name) for feat in layer.getFeatures()]
 
         # Calculate statistics
-        average = mean(values)
-        maximum = max(values)
-        minimum = min(values)
-        mode_value = mode(values)
+        valids = sum(1 for d in values if d is not None)
+        if valids>0:
+            average = mean(d for d in values if d is not None)
+            maximum = max(d for d in values if d is not None)
+            minimum = min(d for d in values if d is not None)
+            mode_value = mode(d for d in values if d is not None)
+        else:
+            average = "All nulls"
+            maximum = "All nulls"
+            minimum = "All nulls"
+            mode_value = "All nulls"
 
         # Count occurrences of each value
         counter = Counter(values)
@@ -899,11 +1034,20 @@ class DataAnalysisDialog(QtWidgets.QDialog):
         true_count = values.count(True)
         false_count = values.count(False)
 
+        # Create a QTableWidget to display the statistics
+        statistics_table = QtWidgets.QTableWidget()
+        statistics_table.setRowCount(2)
+        statistics_table.setColumnCount(2)
+        statistics_table.setHorizontalHeaderLabels(['Property', 'Value'])
+
         # Set data in the statistics table
-        self.statistics_table.setItem(0, 0, QtWidgets.QTableWidgetItem("True"))
-        self.statistics_table.setItem(0, 1, QtWidgets.QTableWidgetItem(str(true_count)))
-        self.statistics_table.setItem(1, 0, QtWidgets.QTableWidgetItem("False"))
-        self.statistics_table.setItem(1, 1, QtWidgets.QTableWidgetItem(str(false_count)))
+        statistics_table.setItem(0, 0, QtWidgets.QTableWidgetItem("True"))
+        statistics_table.setItem(0, 1, QtWidgets.QTableWidgetItem(str(true_count)))
+        statistics_table.setItem(1, 0, QtWidgets.QTableWidgetItem("False"))
+        statistics_table.setItem(1, 1, QtWidgets.QTableWidgetItem(str(false_count)))
+
+        # Add the table to the layout
+        self.layout.addWidget(statistics_table)
 
     def datetime_analysis(self, layer, field_name):
         # Retrieve all values for the specified field
@@ -916,11 +1060,20 @@ class DataAnalysisDialog(QtWidgets.QDialog):
         earliest_date = min(values)
         latest_date = max(values)
 
+        # Create a QTableWidget to display the statistics
+        statistics_table = QtWidgets.QTableWidget()
+        statistics_table.setRowCount(2)
+        statistics_table.setColumnCount(2)
+        statistics_table.setHorizontalHeaderLabels(['Property', 'Value'])
+
         # Set data in the statistics table
-        self.statistics_table.setItem(0, 0, QtWidgets.QTableWidgetItem("Earliest"))
-        self.statistics_table.setItem(0, 1, QtWidgets.QTableWidgetItem(earliest_date.toString()))
-        self.statistics_table.setItem(1, 0, QtWidgets.QTableWidgetItem("Latest"))
-        self.statistics_table.setItem(1, 1, QtWidgets.QTableWidgetItem(latest_date.toString()))
+        statistics_table.setItem(0, 0, QtWidgets.QTableWidgetItem("Earliest"))
+        statistics_table.setItem(0, 1, QtWidgets.QTableWidgetItem(earliest_date.toString()))
+        statistics_table.setItem(1, 0, QtWidgets.QTableWidgetItem("Latest"))
+        statistics_table.setItem(1, 1, QtWidgets.QTableWidgetItem(latest_date.toString()))
+
+        # Add the table to the layout
+        self.layout.addWidget(statistics_table)
 
     def geometry_analysis(self, layer, field_name):
         # Perform your geometry data analysis here and display the results
